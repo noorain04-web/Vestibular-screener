@@ -462,6 +462,10 @@ const I18N = {
     notDiagnosis: "It is not a diagnosis. Please see a doctor — or an emergency room if symptoms are severe or sudden — for an accurate evaluation. In the pilot study this algorithm was based on (n=86 patients), its top-two output matched an expert otologist's diagnosis 82.1% of the time; individual disorders varied in accuracy, and the study's own authors note it still needs external, multi-center validation before clinical use.",
     pdfAuto: "A PDF with all your answers and these results has been downloaded automatically. If your browser blocked it, use the button below.",
     downloadPdf: "Download results PDF",
+    sharePdf: "Share PDF",
+    sharePdfWhatsApp: "Share PDF on WhatsApp",
+    shareUnsupported: "Your browser cannot attach files through the share sheet. The PDF has been downloaded; please attach it in WhatsApp.",
+    shareCancelled: "Sharing was cancelled.",
     uploadPrefix: "To store it in GitHub: open your repo → Add file → Upload files → drag in the downloaded PDF → in the filename box before committing, type the full path",
     startOver: "Start over",
     notAnswered: "not answered",
@@ -528,6 +532,10 @@ const I18N = {
     notDiagnosis: "यह निदान नहीं है। सटीक मूल्यांकन के लिए चिकित्सक से मिलें — और यदि लक्षण गंभीर या अचानक हों तो आपातकालीन विभाग जाएँ। जिस पायलट अध्ययन (n=86) पर यह एल्गोरिद्म आधारित है, उसमें इसके शीर्ष दो परिणाम विशेषज्ञ ओटोलॉजिस्ट के निदान से 82.1% मामलों में मेल खाते थे; अलग-अलग विकारों में सटीकता अलग थी। अध्ययन के लेखकों ने यह भी बताया है कि नैदानिक उपयोग से पहले बाहरी, बहु-केंद्र सत्यापन आवश्यक है।",
     pdfAuto: "आपके सभी उत्तरों और परिणामों वाली PDF स्वतः डाउनलोड की गई है। यदि आपके ब्राउज़र ने डाउनलोड रोक दिया हो, तो नीचे दिए गए बटन का उपयोग करें।",
     downloadPdf: "परिणाम PDF डाउनलोड करें",
+    sharePdf: "PDF साझा करें",
+    sharePdfWhatsApp: "WhatsApp पर PDF साझा करें",
+    shareUnsupported: "आपका ब्राउज़र शेयर शीट के माध्यम से फ़ाइल संलग्न नहीं कर सकता। PDF डाउनलोड हो गई है; कृपया इसे WhatsApp में संलग्न करें।",
+    shareCancelled: "शेयर करना रद्द कर दिया गया।",
     uploadPrefix: "इसे GitHub में सुरक्षित करने के लिए: अपनी रिपॉज़िटरी खोलें → Add file → Upload files → डाउनलोड की गई PDF को डालें → Commit करने से पहले filename बॉक्स में पूरा path दर्ज करें",
     startOver: "फिर से शुरू करें",
     notAnswered: "उत्तर नहीं दिया गया",
@@ -1121,13 +1129,65 @@ async function buildPDF(result){
   return doc;
 }
 
-async function downloadPDF(result){
+async function buildPDFBlob(result){
   const doc = await buildPDF(result);
-  const slug = slugifyName(state.name);
-  const timestamp = new Date().toISOString().replace(/[:.]/g,'-');
-  const filename = `${timestamp}.pdf`;
-  doc.save(filename);
-  return `results/${slug}/${filename}`;
+  return {
+    blob: doc.output('blob'),
+    filename: `${new Date().toISOString().replace(/[:.]/g,'-')}.pdf`
+  };
+}
+
+async function downloadPDF(result){
+  const { blob, filename } = await buildPDFBlob(result);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+  return `results/${slugifyName(state.name)}/${filename}`;
+}
+
+async function sharePDF(result){
+  const { blob, filename } = await buildPDFBlob(result);
+  const file = new File([blob], filename, { type:'application/pdf' });
+
+  // On supported phones/browsers this opens the native share sheet and
+  // allows WhatsApp to receive the actual PDF as an attachment.
+  if(navigator.share && navigator.canShare && navigator.canShare({files:[file]})){
+    try {
+      await navigator.share({
+        title: t('pdfTitle'),
+        text: 'Vestibular screening report',
+        files: [file]
+      });
+      return { shared:true };
+    } catch(e){
+      if(e && e.name === 'AbortError') return { cancelled:true };
+      console.warn('Native PDF sharing failed:', e);
+    }
+  }
+
+  // Fallback: download the PDF and open WhatsApp with a short message.
+  // The user must attach the downloaded PDF manually.
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+
+  const message = encodeURIComponent(
+    state.language==='hi'
+      ? 'वेस्टिब्युलर स्क्रीनिंग रिपोर्ट संलग्न है।'
+      : 'Vestibular screening report is ready. Please attach the downloaded PDF.'
+  );
+  window.open(`https://wa.me/?text=${message}`, '_blank', 'noopener');
+  return { fallback:true };
 }
 
 async function renderResults(app){
@@ -1170,6 +1230,7 @@ async function renderResults(app){
         ${t('pdfAuto')}
       </p>
       <button class="btn btn-primary" id="downloadBtn">${t('downloadPdf')}</button>
+      <button class="btn btn-ghost" id="sharePdfBtn" style="margin-top:10px;">📱 ${t('sharePdfWhatsApp')}</button>
       <p id="uploadHint" style="font-size:13px; color:var(--muted,#6b7280); margin-top:8px; display:none;"></p>
 
       <button class="btn btn-ghost" id="restartBtn" style="margin-top:10px;">${t('startOver')}</button>
@@ -1204,6 +1265,29 @@ async function renderResults(app){
     try {
       const path = await downloadPDF(result);
       showUploadHint(path);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById('sharePdfBtn').addEventListener('click', async ()=>{
+    const btn = document.getElementById('sharePdfBtn');
+    btn.disabled = true;
+    try {
+      const outcome = await sharePDF(result);
+      const hint = document.getElementById('uploadHint');
+      if(outcome && outcome.fallback){
+        hint.style.display='block';
+        hint.textContent = t('shareUnsupported');
+      } else if(outcome && outcome.cancelled){
+        hint.style.display='block';
+        hint.textContent = t('shareCancelled');
+      }
+    } catch(e) {
+      console.error('PDF sharing failed:', e);
+      const hint = document.getElementById('uploadHint');
+      hint.style.display='block';
+      hint.textContent = t('shareUnsupported');
     } finally {
       btn.disabled = false;
     }
