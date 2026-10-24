@@ -1254,10 +1254,35 @@ async function buildHindiPdfWithBrowser(result){
     });
     if(d.fonts&&d.fonts.ready) await d.fonts.ready;
     await new Promise(resolve=>setTimeout(resolve,300));
-    const {jsPDF}=window.jspdf; const pdf=new jsPDF({unit:'pt',format:'a4',compress:true});
-    if(typeof pdf.html!=='function') throw new Error('Hindi PDF renderer plugin unavailable');
-    const margin=26;
-    await pdf.html(d.body,{x:margin,y:margin,width:pdf.internal.pageSize.getWidth()-2*margin,windowWidth:794,autoPaging:'text',html2canvas:{scale:1.5,useCORS:true,backgroundColor:'#ffffff',logging:false}});
+    const {jsPDF}=window.jspdf;
+    const pdf=new jsPDF({unit:'pt',format:'a4',compress:true});
+    const rasterCanvas=await html2canvas(d.body,{
+      scale:2,
+      useCORS:true,
+      backgroundColor:'#ffffff',
+      logging:false,
+      windowWidth:794
+    });
+    const pageW=pdf.internal.pageSize.getWidth();
+    const pageH=pdf.internal.pageSize.getHeight();
+    const margin=24;
+    const contentW=pageW-margin*2;
+    const contentH=pageH-margin*2;
+    const pxPerPt=rasterCanvas.width/contentW;
+    const slicePx=Math.floor(contentH*pxPerPt);
+    let offset=0, pageIndex=0;
+    while(offset<rasterCanvas.height){
+      const h=Math.min(slicePx,rasterCanvas.height-offset);
+      const slice=document.createElement('canvas');
+      slice.width=rasterCanvas.width; slice.height=h;
+      const ctx=slice.getContext('2d');
+      ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,slice.width,slice.height);
+      ctx.drawImage(rasterCanvas,0,offset,rasterCanvas.width,h,0,0,slice.width,h);
+      if(pageIndex>0) pdf.addPage();
+      const drawH=h/pxPerPt;
+      pdf.addImage(slice.toDataURL('image/jpeg',0.94),'JPEG',margin,margin,contentW,drawH,undefined,'FAST');
+      offset+=h; pageIndex+=1;
+    }
     return pdf;
   }finally{frame.remove();}
 }
