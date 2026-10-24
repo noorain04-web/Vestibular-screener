@@ -1156,85 +1156,110 @@ async function ensureHindiFont(doc){
   return hindiFontPromise;
 }
 
+// Hindi PDF reports use a shaped HTML rendering path. jsPDF's direct text
+// path does not correctly shape many Devanagari conjuncts and vowel marks.
 async function buildPDF(result){
+  if(state.language === 'hi') return buildHindiPdfWithBrowser(result);
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'pt', format:'a4' });
-  if(state.language==='hi'){
-    try { await ensureHindiFont(doc); } catch(e) {
-      console.warn('Hindi PDF font load failed; using browser text fallback.', e);
-    }
-  }
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
-  const margin = 48;
-  const maxW = pageW - margin*2;
+  const margin = 48, maxW = pageW - margin*2;
   let y = margin;
-  const fontName = state.language==='hi' ? 'NotoSansDevanagari' : 'helvetica';
-
-  function ensureRoom(lineHeight){
-    if(y + lineHeight > pageH - margin){ doc.addPage(); y = margin; }
+  function ensureRoom(h){ if(y+h>pageH-margin){doc.addPage();y=margin;} }
+  function writeLine(text,opts={}){
+    const size=opts.size||10, style=opts.style||'normal', gap=opts.gap!=null?opts.gap:size+4;
+    doc.setFont('helvetica',style); doc.setFontSize(size);
+    doc.splitTextToSize(String(text),maxW).forEach(line=>{ensureRoom(gap);doc.text(line,margin,y);y+=gap;});
   }
-  function writeLine(text, opts={}){
-    const size = opts.size || 10;
-    const style = state.language==='hi' ? 'normal' : (opts.style || 'normal');
-    const gap = opts.gap != null ? opts.gap : size + 4;
-    doc.setFont(fontName, style);
-    doc.setFontSize(size);
-    const lines = doc.splitTextToSize(String(text), maxW);
-    lines.forEach(line=>{
-      ensureRoom(gap);
-      doc.text(line, margin, y);
-      y += gap;
-    });
-  }
-  function spacer(h){ y += h; }
-
-  writeLine(t('pdfTitle'), { size:16, style:'bold', gap:22 });
-  writeLine(`${t('generated')}: ${new Date().toLocaleString(state.language==='hi'?'hi-IN':'en-IN')}`, { size:9, style:'italic', gap:16 });
-  spacer(6);
-
-  writeLine(t('subjectInfo'), { size:12, style:'bold', gap:16 });
-  writeLine(`${t('fullName')}: ${state.name || '—'}`);
-  writeLine(`${t('gender')}: ${state.language==='hi' ? ({Female:t('female'),Male:t('male'),Other:t('other'),'Prefer not to say':t('preferNot')}[state.gender] || '—') : (state.gender || '—')}`);
-  writeLine(`${t('age')}: ${state.age != null ? state.age : '—'}`);
-  writeLine(`${t('phone')}: ${state.phone || '—'}`);
-  spacer(10);
-
-  writeLine(t('results'), { size:12, style:'bold', gap:16 });
-  if(state.vascularFlagged){
-    writeLine(`${t('reminder')}: ${t('reminderText')}`, { size:9, style:'bold', gap:13 });
-    spacer(4);
-  }
-  const rawTopTwo = result.ranked.slice(0,2);
-  rawTopTwo.forEach(([dx,score],i)=>{
-    writeLine(`${i===0?t('mostLikely'):t('alsoDiscuss')}: ${currentDxLabel(dx)} (${t('matches')} ${score}% ${t('criteria')})`, {size:11,style:'bold',gap:14});
-    writeLine(currentDxDesc(dx), {size:9,gap:12});
-    const info=currentDxInfo(dx);
-    const h=state.language==='hi'
-      ? {causes:'संभावित कारण / योगदान देने वाले कारक',tests:'क्लिनिशियन जिन जांचों पर विचार कर सकते हैं',management:'प्रबंधन / अगले कदम'}
-      : {causes:'Possible causes / contributors',tests:'Further evaluation a clinician may consider',management:'Management / next steps'};
+  function spacer(h){y+=h;}
+  writeLine(t('pdfTitle'),{size:16,style:'bold',gap:22});
+  writeLine(`${t('generated')}: ${new Date().toLocaleString('en-IN')}`,{size:9,style:'italic',gap:16});
+  spacer(6); writeLine(t('subjectInfo'),{size:12,style:'bold',gap:16});
+  writeLine(`${t('fullName')}: ${state.name||'—'}`);
+  writeLine(`${t('gender')}: ${state.gender||'—'}`);
+  writeLine(`${t('age')}: ${state.age!=null?state.age:'—'}`);
+  writeLine(`${t('phone')}: ${state.phone||'—'}`); spacer(10);
+  writeLine(t('results'),{size:12,style:'bold',gap:16});
+  if(state.vascularFlagged){writeLine(`${t('reminder')}: ${t('reminderText')}`,{size:9,style:'bold',gap:13});spacer(4);}
+  result.ranked.slice(0,2).forEach(([dx,score],i)=>{
+    writeLine(`${i===0?t('mostLikely'):t('alsoDiscuss')}: ${currentDxLabel(dx)} (${t('matches')} ${score}% ${t('criteria')})`,{size:11,style:'bold',gap:14});
+    writeLine(currentDxDesc(dx),{size:9,gap:12}); const info=currentDxInfo(dx);
+    const h={causes:'Possible causes / contributors',tests:'Audiological / vestibular / medical evaluation',differential:'Differential diagnosis — conditions to distinguish',management:'Management / next steps'};
     writeLine(h.causes,{size:9,style:'bold',gap:12}); info.causes.forEach(x=>writeLine(`• ${x}`,{size:8,gap:11}));
     writeLine(h.tests,{size:9,style:'bold',gap:12}); info.tests.forEach(x=>writeLine(`• ${x}`,{size:8,gap:11}));
     writeLine(h.differential,{size:9,style:'bold',gap:12}); info.differential.forEach(x=>writeLine(`• ${x}`,{size:8,gap:11}));
-    writeLine(h.management,{size:9,style:'bold',gap:12}); info.management.forEach(x=>writeLine(`• ${x}`,{size:8,gap:11}));
-    spacer(4);
+    writeLine(h.management,{size:9,style:'bold',gap:12}); info.management.forEach(x=>writeLine(`• ${x}`,{size:8,gap:11})); spacer(4);
   });
-  writeLine(t('allSix'), { size:10, style:'bold', gap:13 });
-  result.ranked.forEach(([c,s])=>{ writeLine(`  ${currentDxLabel(c)}: ${s}%`, { size:9, gap:12 }); });
-  spacer(8);
-  writeLine(t('algorithmNote'), { size:8, style:'italic', gap:11 });
-  spacer(14);
-
-  writeLine(t('allResponses'), { size:12, style:'bold', gap:16 });
-  QUESTIONS.forEach(q=>{
-    const lq = localizedQuestion(q);
-    writeLine(`${q.id}. ${lq.text}`, { size:9, style:'bold', gap:12 });
-    writeLine(`${state.language==='hi'?'उत्तर':'Answer'}: ${answerText(q, state.answers[q.id])}`, { size:9, gap:14 });
-  });
-
+  writeLine(t('allSix'),{size:10,style:'bold',gap:13});
+  result.ranked.forEach(([c,s])=>writeLine(`  ${currentDxLabel(c)}: ${s}%`,{size:9,gap:12}));
+  spacer(8); writeLine(t('algorithmNote'),{size:8,style:'italic',gap:11}); spacer(14);
+  writeLine(t('allResponses'),{size:12,style:'bold',gap:16});
+  QUESTIONS.forEach(q=>{const lq=localizedQuestion(q);writeLine(`${q.id}. ${lq.text}`,{size:9,style:'bold',gap:12});writeLine(`Answer: ${answerText(q,state.answers[q.id])}`,{size:9,gap:14});});
   return doc;
 }
 
+function escapeHtml(value){
+  return String(value==null?'':value).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
+function buildHindiPdfHtml(result){
+  const chunks=[];
+  const p=(txt,cls='')=>chunks.push(`<p class="${cls}">${escapeHtml(txt)}</p>`);
+  const section=(title,items)=>chunks.push(`<h3>${escapeHtml(title)}</h3><ul>${items.map(x=>`<li>${escapeHtml(x)}</li>`).join('')}</ul>`);
+  p(t('pdfTitle'),'title'); p(`${t('generated')}: ${new Date().toLocaleString('hi-IN')}`,'meta');
+  chunks.push(`<h2>${escapeHtml(t('subjectInfo'))}</h2>`);
+  const gender=({Female:t('female'),Male:t('male'),Other:t('other'),'Prefer not to say':t('preferNot')}[state.gender]||'—');
+  p(`${t('fullName')}: ${state.name||'—'}`); p(`${t('gender')}: ${gender}`); p(`${t('age')}: ${state.age!=null?state.age:'—'}`); p(`${t('phone')}: ${state.phone||'—'}`);
+  chunks.push(`<h2>${escapeHtml(t('results'))}</h2>`);
+  if(state.vascularFlagged)p(`${t('reminder')}: ${t('reminderText')}`,'alert');
+  result.ranked.slice(0,2).forEach(([dx,score],i)=>{
+    p(`${i===0?t('mostLikely'):t('alsoDiscuss')}: ${currentDxLabel(dx)} (${t('matches')} ${score}% ${t('criteria')})`,'resultTitle'); p(currentDxDesc(dx));
+    const info=currentDxInfo(dx);
+    section('संभावित कारण / योगदान देने वाले कारक',info.causes);
+    section('ऑडियोलॉजिकल / वेस्टिब्युलर / मेडिकल जाँच',info.tests);
+    section('डिफरेंशियल डायग्नोसिस — किन स्थितियों में अंतर करना है',info.differential);
+    section('प्रबंधन / अगले कदम',info.management);
+  });
+  chunks.push(`<h2>${escapeHtml(t('allSix'))}</h2><ul>${result.ranked.map(([dx,score])=>`<li>${escapeHtml(currentDxLabel(dx))}: ${score}%</li>`).join('')}</ul>`);
+  p(t('algorithmNote'),'note'); chunks.push(`<h2>${escapeHtml(t('allResponses'))}</h2>`);
+  QUESTIONS.forEach(q=>{const lq=localizedQuestion(q);p(`${q.id}. ${lq.text}`,'question');p(`उत्तर: ${answerText(q,state.answers[q.id])}`,'answer');});
+  return `<!doctype html><html lang="hi"><head><meta charset="utf-8"><style>
+    @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600;700&display=swap');
+    *{box-sizing:border-box}html,body{margin:0;padding:0;background:#fff;color:#1f2937}
+    body{font-family:'Noto Sans Devanagari','Nirmala UI','Mangal',sans-serif;font-size:12px;line-height:1.65;padding:24px}
+    h2{font-size:16px;margin:18px 0 8px;border-bottom:1px solid #dbe4e8;padding-bottom:4px}
+    h3{font-size:13px;margin:12px 0 4px;color:#174e5b}p{margin:4px 0;overflow-wrap:anywhere}ul{margin:4px 0 10px;padding-left:22px}li{margin:2px 0}
+    .title{font-size:22px;font-weight:700;color:#174e5b;margin-bottom:3px}.meta,.note{font-size:10px;color:#555}
+    .resultTitle{font-size:14px;font-weight:700;margin-top:14px;color:#174e5b}.question{font-weight:600;margin-top:8px}.answer{margin-left:10px;color:#555}
+    .alert{font-weight:600;color:#8a1c1c;background:#fff0f0;padding:8px}
+  </style></head><body>${chunks.join('\n')}</body></html>`;
+}
+
+async function buildHindiPdfWithBrowser(result){
+  // Build using the browser's Indic shaping, then rasterize that already-shaped
+  // DOM into PDF pages. Use html2canvas-compatible jsPDF html() plugin if present.
+  const frame=document.createElement('iframe');
+  frame.setAttribute('aria-hidden','true');
+  frame.style.cssText='position:fixed;left:-10000px;top:0;width:794px;height:1123px;border:0;visibility:hidden';
+  document.body.appendChild(frame);
+  try{
+    const d=frame.contentDocument; d.open(); d.write(buildHindiPdfHtml(result)); d.close();
+    await new Promise((resolve,reject)=>{
+      let done=false; const finish=()=>{if(!done){done=true;resolve();}};
+      const timer=setTimeout(()=>reject(new Error('Hindi report font/render timeout')),15000);
+      if(d.readyState==='complete'){clearTimeout(timer);finish();}
+      else frame.onload=()=>{clearTimeout(timer);finish();};
+    });
+    if(d.fonts&&d.fonts.ready) await d.fonts.ready;
+    await new Promise(resolve=>setTimeout(resolve,300));
+    const {jsPDF}=window.jspdf; const pdf=new jsPDF({unit:'pt',format:'a4',compress:true});
+    if(typeof pdf.html!=='function') throw new Error('Hindi PDF renderer plugin unavailable');
+    const margin=26;
+    await pdf.html(d.body,{x:margin,y:margin,width:pdf.internal.pageSize.getWidth()-2*margin,windowWidth:794,autoPaging:'text',html2canvas:{scale:1.5,useCORS:true,backgroundColor:'#ffffff',logging:false}});
+    return pdf;
+  }finally{frame.remove();}
+}
 async function buildPDFBlob(result){
   const doc = await buildPDF(result);
   return {
